@@ -1,6 +1,8 @@
-# media-distill-pipeline
+# xhs-bilibili-distill
 
-**Turn a list of video links into illustrated, structured reports you actually re-read.**
+**小红书 / B站 内容蒸馏管线**
+
+**Turn a list of Xiaohongshu (小红书 / RedNote) or Bilibili (B站) links into illustrated, structured reports you actually re-read.**
 
 Built for a real problem: I follow a few hundred creators whose useful content is locked inside video. Watching does not scale and does not search. Existing tools stop at a transcript — which is just a longer thing to read.
 
