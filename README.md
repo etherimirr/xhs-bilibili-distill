@@ -1,30 +1,50 @@
 # media-distill-pipeline
 
-**Turn a list of video links into a folder of plain-text transcripts.** Resumable, idempotent, and honest about what failed.
+**Turn a list of video links into illustrated, structured reports you actually re-read.**
 
-Built for a real problem: I follow a few hundred creators whose useful content is locked inside video. Reading is 10× faster than watching, and text is searchable. So: download → extract audio → transcribe → text file. Then any LLM can work on it.
+Built for a real problem: I follow a few hundred creators whose useful content is locked inside video. Watching does not scale and does not search. Existing tools stop at a transcript — which is just a longer thing to read.
+
+So this goes three stages further: **transcript + key frames + a report that says what it means for a specific reader.**
 
 <br>
 
 ## What it does
 
 ```
-list of items
-   ├── Xiaohongshu  →  XHS-Downloader  →  video
-   └── Bilibili     →  yt-dlp -f ba    →  audio only
-                            ↓
-                  ffmpeg → 16 kHz mono WAV
-                            ↓
-              faster-whisper (int8, CPU, VAD)
-                            ↓
-              transcripts/<source>/<id>.txt
+   list of items
+        │
+   ┌────┴─────────────────────────┐
+   │  Xiaohongshu → XHS-Downloader│
+   │  Bilibili    → yt-dlp        │
+   └────┬─────────────────────────┘
+        │
+   ┌────┴────────────────┬──────────────────────────┐
+   │ audio               │ video                    │
+   │ ffmpeg → 16kHz mono │ ffmpeg scene-detect      │
+   │ faster-whisper      │ + periodic sampling      │
+   ↓                     ↓                          │
+transcript            key frames                    │
+   └──────────┬──────────┘                          │
+              ↓                                     │
+     prompt (your LLM, any vendor)                   │
+              ↓                                     │
+   { body, takeaways, for_you }  ←──────────────────┘
+              ↓
+   one self-contained HTML report
 ```
 
 ```bash
 pip install -r requirements.txt          # plus ffmpeg and yt-dlp on PATH
 
-python -m distill.cli bilibili my_videos.txt --sleep 2
-python -m distill.cli xhs      my_notes.txt  --sleep 4
+# 1. fetch + transcribe + keep 8 key frames each
+python -m distill.cli fetch bilibili my_videos.txt --frames 8 --sleep 2
+
+# 2. get the distillation prompt, feed it to whatever model you use
+python -m distill.cli prompt transcripts/bilibili/BV1xx.txt --profile me.txt > p.txt
+
+# 3. paste the model's JSON back, get an illustrated report
+python -m distill.cli report transcripts/bilibili/BV1xx.txt model_out.json \
+       --frames-dir transcripts/bilibili/frames/BV1xx
 ```
 
 Input is one item per line, `#` for comments:
@@ -40,7 +60,32 @@ https://www.bilibili.com/video/BV1xx411c7mD
 
 <br>
 
+## The report schema is the whole point
+
+A summariser that emits one blob of prose gives you a shorter transcript. Three fields make it something you act on:
+
+| field | question it answers |
+|---|---|
+| `body` | what was actually said |
+| `takeaways` | what to remember |
+| **`for_you`** | **what it means for *this* reader, given a profile you supply** |
+
+`for_you` is the field that makes a note worth keeping — and the one a model is most likely to fabricate, so the prompt explicitly instructs it to say where the content does *not* apply. A note that flatters everything is useless.
+
+Reports are single self-contained HTML files with frames inlined as data URIs. The header states how many frames were detected versus shown, so you can see the sampling rather than trust it.
+
+<br>
+
 ## The parts that took actual thinking
+
+**Frame selection is a union, not an interval.**
+Fixed-interval sampling misses cuts and wastes frames on static shots. Scene-cut detection alone returns a single frame for a ten-minute unbroken monologue. So: `select='gt(scene,0.3)+not(mod(n,240))'` — every scene change above threshold **plus** a periodic sample. Then prune evenly across the timeline rather than taking the first N, so a heavily-cut opening does not eat the whole quota.
+
+**The LLM step is deliberately not built in.**
+Hard-wiring a model would force an API key on every user and lock the pipeline to one vendor. Instead the tool emits a prompt and reads back JSON. `parse_response` tolerates a model wrapping its answer in prose or a code fence, because they all do.
+
+**Long transcripts truncate from the middle.**
+The opening states the thesis and the ending states the conclusion; the middle is where repetition lives. Cutting the middle and labelling the gap preserves more signal per token than a head-only cut.
 
 This started as eight near-identical scripts — one per creator I was following. Collapsing them into one parameterised tool surfaced the decisions that were implicit before:
 

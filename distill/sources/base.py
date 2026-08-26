@@ -4,6 +4,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from .. import config
 from ..transcribe import to_wav, transcribe
+from ..keyframes import extract as extract_frames, prune as prune_frames
 
 FAILURE_PREFIX = "[!]"
 
@@ -36,7 +37,8 @@ class Source:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(f"title: {title}\n{FAILURE_PREFIX} {reason}\n", encoding="utf-8")
 
-    def run_one(self, item: Item) -> tuple[bool, str]:
+    def run_one(self, item: Item, frames: int = 0) -> tuple[bool, str]:
+        """frames > 0 also extracts that many key frames before deleting the media."""
         out = config.OUT / self.name / f"{item.key}.txt"
         if self.already_done(out):
             return True, "skip"
@@ -63,6 +65,13 @@ class Source:
             wav.unlink(missing_ok=True)
             return False, "transcribe"
 
+        n_frames = 0
+        if frames > 0:
+            fdir = config.OUT / self.name / "frames" / item.key
+            got = extract_frames(media, fdir)
+            n_frames = len(got)
+            prune_frames(got, frames)
+
         title = self.fetch_title(item)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(f"title: {title}\n\n{text}", encoding="utf-8")
@@ -73,4 +82,4 @@ class Source:
             media.unlink(missing_ok=True)
         except OSError:
             pass
-        return True, f"{len(text)} chars"
+        return True, f"{len(text)} chars" + (f", {n_frames} frames" if frames else "")
